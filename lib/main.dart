@@ -8,6 +8,7 @@ import 'features/auth/presentation/bloc/auth_state.dart';
 import 'features/auth/presentation/pages/login_page.dart';
 import 'features/auth/presentation/pages/register_page.dart';
 import 'features/auth/presentation/pages/forgot_password_page.dart';
+import 'features/map/presentation/pages/map_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,7 +37,7 @@ class MyApp extends StatelessWidget {
           '/login': (context) => const LoginPage(),
           '/register': (context) => const RegisterPage(),
           '/forgot-password': (context) => const ForgotPasswordPage(),
-          '/home': (context) => const HomePage(),
+          '/home': (context) => const MapPage(),
         },
       ),
     );
@@ -56,62 +57,11 @@ class AuthWrapper extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         } else if (state.status == AuthStatus.authenticated) {
-          return const HomePage();
+          return const MapPage();
         } else {
           return const LoginPage();
         }
       },
-    );
-  }
-}
-
-// Pantalla temporal de Home
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Skyfast - Home'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () {
-              context.read<AuthBloc>().add(const AuthLogoutRequested());
-            },
-          ),
-        ],
-      ),
-      body: BlocBuilder<AuthBloc, AuthState>(
-        builder: (context, state) {
-          final user = state.user;
-
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.check_circle, size: 100, color: HuxColors.primary),
-                const SizedBox(height: 24),
-                const Text(
-                  '¡Bienvenido!',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                if (user != null) ...[
-                  Text(user.fullName, style: const TextStyle(fontSize: 20)),
-                  const SizedBox(height: 8),
-                  if (user.email != null)
-                    Text(
-                      user.email!,
-                      style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                    ),
-                ],
-              ],
-            ),
-          );
-        },
-      ),
     );
   }
 }
