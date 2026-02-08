@@ -20,17 +20,22 @@ class AuthRepositoryImpl implements AuthRepository {
     required String password,
   }) async {
     try {
+      print('🔐 Login iniciado...');
       final authResponse = await remoteDataSource.login(
         email: email,
         phone: phone,
         password: password,
       );
 
+      print('✅ Login exitoso');
+      print('   Access Token: ${authResponse.accessToken.substring(0, 20)}...');
+
       // Guardar tokens
       await storage.saveTokens(
         accessToken: authResponse.accessToken,
         refreshToken: authResponse.refreshToken,
       );
+      print('✅ Tokens guardados en storage');
 
       // Guardar info del usuario
       await storage.saveUserId(authResponse.user.id);
@@ -38,15 +43,22 @@ class AuthRepositoryImpl implements AuthRepository {
         await storage.saveUserEmail(authResponse.user.email!);
       }
       await storage.saveUserRole(authResponse.user.role.value);
+      print('✅ Info de usuario guardada');
+      print('   User ID: ${authResponse.user.id}');
+      print('   Role: ${authResponse.user.role.value}');
 
       return Right(authResponse);
     } on UnauthorizedException catch (e) {
+      print('❌ Login falló: Unauthorized - ${e.message}');
       return Left(UnauthorizedFailure(e.message));
     } on NetworkException catch (e) {
+      print('❌ Login falló: Network - ${e.message}');
       return Left(NetworkFailure(e.message));
     } on ServerException catch (e) {
+      print('❌ Login falló: Server - ${e.message}');
       return Left(ServerFailure(e.message));
     } catch (e) {
+      print('❌ Login falló: Unexpected - $e');
       return Left(ServerFailure('Unexpected error: $e'));
     }
   }
@@ -123,9 +135,20 @@ class AuthRepositoryImpl implements AuthRepository {
   @override
   Future<Either<Failure, bool>> isLoggedIn() async {
     try {
+      print('🔍 Verificando sesión...');
       final token = await storage.getAccessToken();
-      return Right(token != null && token.isNotEmpty);
+      final isLogged = token != null && token.isNotEmpty;
+
+      if (isLogged) {
+        print('✅ Sesión activa encontrada');
+        print('   Token: ${token!.substring(0, 20)}...');
+      } else {
+        print('⚠️  No hay sesión activa');
+      }
+
+      return Right(isLogged);
     } catch (e) {
+      print('❌ Error verificando sesión: $e');
       return Left(CacheFailure('Failed to check login status'));
     }
   }
