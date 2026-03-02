@@ -11,6 +11,7 @@ import '../../features/auth/data/repositories/auth_repository_impl.dart';
 import '../../features/auth/domain/repositories/auth_repository.dart';
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/trip/presentation/bloc/trip_bloc.dart';
+import '../../features/app_mode/app_mode_cubit.dart';
 
 final getIt = GetIt.instance;
 
@@ -51,4 +52,5 @@ Future<void> setupDependencyInjection() async {
   // BLoC
   getIt.registerFactory<AuthBloc>(() => AuthBloc(authRepository: getIt()));
   getIt.registerFactory<TripBloc>(() => TripBloc(socketService: getIt()));
+  getIt.registerLazySingleton<AppModeCubit>(() => AppModeCubit());
 }

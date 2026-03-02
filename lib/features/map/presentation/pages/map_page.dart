@@ -3,20 +3,25 @@ import 'package:app_front_transport/features/trip/domain/entities/trip.dart';
 import 'package:app_front_transport/features/trip/presentation/bloc/trip_bloc.dart';
 import 'package:app_front_transport/features/trip/presentation/bloc/trip_event.dart';
 import 'package:app_front_transport/features/trip/presentation/bloc/trip_state.dart';
+import 'package:app_front_transport/features/app_mode/app_mode_cubit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get_it/get_it.dart';
 import 'package:hux/hux.dart';
+import 'dart:async';
 
 class MapPage extends StatelessWidget {
   const MapPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => GetIt.I<TripBloc>(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (context) => GetIt.I<TripBloc>()),
+        BlocProvider(create: (context) => GetIt.I<AppModeCubit>()),
+      ],
       child: const _MapPageContent(),
     );
   }
@@ -31,7 +36,6 @@ class _MapPageContent extends StatefulWidget {
 
 class _MapPageContentState extends State<_MapPageContent> {
   GoogleMapController? _mapController;
-  Position? _currentPosition;
   final LatLng _center = const LatLng(
     -0.2521,
     -79.1753,
@@ -49,6 +53,10 @@ class _MapPageContentState extends State<_MapPageContent> {
   String? _destinationAddress;
   VehicleCategory _selectedCategory = VehicleCategory.comfort;
 
+  // Para el modo conductor
+  bool _isDriverActive = false;
+  Timer? _locationTimer;
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +67,7 @@ class _MapPageContentState extends State<_MapPageContent> {
   void dispose() {
     _searchController.dispose();
     _mapController?.dispose();
+    _locationTimer?.cancel();
     super.dispose();
   }
 
@@ -100,7 +109,6 @@ class _MapPageContentState extends State<_MapPageContent> {
       );
 
       setState(() {
-        _currentPosition = position;
         _origin = LatLng(position.latitude, position.longitude);
 
         print('📍 Agregando marcador de origen...');
@@ -271,53 +279,188 @@ class _MapPageContentState extends State<_MapPageContent> {
     );
   }
 
+  void _toggleDriverActive() {
+    setState(() {
+      _isDriverActive = !_isDriverActive;
+    });
+
+    if (_isDriverActive) {
+      print('🚗 Conductor activado - iniciando disponibilidad');
+      _startLocationUpdates();
+      // Emitir evento de disponibilidad al backend
+      context.read<TripBloc>().add(DriverSetAvailable(isAvailable: true));
+    } else {
+      print('🛑 Conductor desactivado - deteniendo disponibilidad');
+      _stopLocationUpdates();
+      // Emitir evento de no disponible al backend
+      context.read<TripBloc>().add(DriverSetAvailable(isAvailable: false));
+    }
+  }
+
+  void _startLocationUpdates() {
+    print('🚗 Conductor activado - iniciando actualizaciones de ubicación');
+
+    // Emitir ubicación inmediatamente
+    _emitCurrentLocation();
+
+    // Luego cada 10 segundos
+    _locationTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      _emitCurrentLocation();
+    });
+  }
+
+  void _stopLocationUpdates() {
+    print('🛑 Conductor desactivado - deteniendo actualizaciones');
+    _locationTimer?.cancel();
+    _locationTimer = null;
+  }
+
+  Future<void> _emitCurrentLocation() async {
+    try {
+      final position = await Geolocator.getCurrentPosition();
+      final tripBloc = context.read<TripBloc>();
+
+      tripBloc.add(
+        DriverUpdateLocation(
+          lat: position.latitude,
+          lng: position.longitude,
+          tripId: tripBloc.state.currentTrip?.id,
+        ),
+      );
+
+      print(
+        '📍 Ubicación emitida: ${position.latitude}, ${position.longitude}',
+      );
+    } catch (e) {
+      print('❌ Error al obtener ubicación: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Skyfast')),
-      body: BlocConsumer<TripBloc, TripState>(
-        listener: (context, state) {
-          if (state.status == TripStateStatus.error) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.errorMessage ?? 'Error al solicitar viaje'),
-              ),
+      appBar: AppBar(
+        title: BlocBuilder<AppModeCubit, AppMode>(
+          builder: (context, appMode) {
+            return Text(
+              appMode == AppMode.passenger
+                  ? 'Skyfast - Pasajero'
+                  : 'Skyfast - Conductor',
             );
-          }
-
-          // Actualizar marcadores de conductores cercanos
-          if (state.nearbyDrivers.isNotEmpty) {
-            _updateNearbyDriversMarkers(state.nearbyDrivers);
-          }
-
-          // Actualizar ubicación del conductor asignado
-          if (state.driverLocation != null) {
-            _addMarker(
-              'driver',
-              state.driverLocation!,
-              'Conductor',
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-            );
-          }
-        },
-        builder: (context, tripState) {
-          return Stack(
-            children: [
-              GoogleMap(
-                onMapCreated: _onMapCreated,
-                initialCameraPosition: CameraPosition(
-                  target: _center,
-                  zoom: 11.0,
+          },
+        ),
+        actions: [
+          BlocBuilder<AppModeCubit, AppMode>(
+            builder: (context, appMode) {
+              return IconButton(
+                icon: Icon(
+                  appMode == AppMode.passenger
+                      ? Icons.local_taxi
+                      : Icons.person,
                 ),
-                myLocationEnabled: true,
-                myLocationButtonEnabled: true,
-                markers: _markers,
-                polylines: _polylines,
-              ),
+                onPressed: () {
+                  context.read<AppModeCubit>().toggleMode();
+                },
+                tooltip: appMode == AppMode.passenger
+                    ? 'Cambiar a modo conductor'
+                    : 'Cambiar a modo pasajero',
+              );
+            },
+          ),
+        ],
+      ),
+      body: BlocBuilder<AppModeCubit, AppMode>(
+        builder: (context, appMode) {
+          if (appMode == AppMode.driver) {
+            return _buildDriverMode(context);
+          }
+          return _buildPassengerMode(context);
+        },
+      ),
+    );
+  }
 
-              // Barra de búsqueda
+  Widget _buildPassengerMode(BuildContext context) {
+    return BlocConsumer<TripBloc, TripState>(
+      listener: (context, state) {
+        if (state.status == TripStateStatus.error) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(state.errorMessage ?? 'Error al solicitar viaje'),
+            ),
+          );
+        }
+
+        // Actualizar marcadores de conductores cercanos
+        if (state.nearbyDrivers.isNotEmpty) {
+          _updateNearbyDriversMarkers(state.nearbyDrivers);
+        }
+
+        // Actualizar ubicación del conductor asignado
+        if (state.driverLocation != null) {
+          _addMarker(
+            'driver',
+            state.driverLocation!,
+            'Conductor',
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+          );
+        }
+      },
+      builder: (context, tripState) {
+        return Stack(
+          children: [
+            GoogleMap(
+              onMapCreated: _onMapCreated,
+              initialCameraPosition: CameraPosition(
+                target: _center,
+                zoom: 11.0,
+              ),
+              myLocationEnabled: true,
+              myLocationButtonEnabled: true,
+              markers: _markers,
+              polylines: _polylines,
+            ),
+
+            // Barra de búsqueda
+            Positioned(
+              top: 10,
+              left: 10,
+              right: 10,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: _onSearchChanged,
+                  style: const TextStyle(color: Colors.black87, fontSize: 16),
+                  decoration: const InputDecoration(
+                    hintText: 'Buscar destino...',
+                    hintStyle: TextStyle(color: Colors.black54, fontSize: 16),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 15,
+                      vertical: 10,
+                    ),
+                    suffixIcon: Icon(Icons.search, color: Colors.black87),
+                  ),
+                ),
+              ),
+            ),
+
+            // Predicciones de búsqueda
+            if (_placePredictions.isNotEmpty &&
+                _searchController.text.isNotEmpty)
               Positioned(
-                top: 10,
+                top: 70,
                 left: 10,
                 right: 10,
                 child: Container(
@@ -332,72 +475,292 @@ class _MapPageContentState extends State<_MapPageContent> {
                       ),
                     ],
                   ),
-                  child: TextField(
-                    controller: _searchController,
-                    onChanged: _onSearchChanged,
-                    style: const TextStyle(color: Colors.black87, fontSize: 16),
-                    decoration: const InputDecoration(
-                      hintText: 'Buscar destino...',
-                      hintStyle: TextStyle(color: Colors.black54, fontSize: 16),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 15,
-                        vertical: 10,
-                      ),
-                      suffixIcon: Icon(Icons.search, color: Colors.black87),
-                    ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _placePredictions.length,
+                    itemBuilder: (context, index) {
+                      final prediction = _placePredictions[index];
+                      return ListTile(
+                        title: Text(
+                          prediction['description'],
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 14,
+                          ),
+                        ),
+                        onTap: () => _selectPlace(
+                          prediction['place_id'],
+                          prediction['description'],
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
 
-              // Predicciones de búsqueda
-              if (_placePredictions.isNotEmpty &&
-                  _searchController.text.isNotEmpty)
-                Positioned(
-                  top: 70,
-                  left: 10,
-                  right: 10,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _placePredictions.length,
-                      itemBuilder: (context, index) {
-                        final prediction = _placePredictions[index];
-                        return ListTile(
-                          title: Text(
-                            prediction['description'],
-                            style: const TextStyle(
-                              color: Colors.black87,
-                              fontSize: 14,
-                            ),
-                          ),
-                          onTap: () => _selectPlace(
-                            prediction['place_id'],
-                            prediction['description'],
-                          ),
-                        );
-                      },
-                    ),
+            // Sheet de solicitud de viaje
+            if (_destination != null) _buildTripSheet(tripState),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverMode(BuildContext context) {
+    return BlocConsumer<TripBloc, TripState>(
+      listener: (context, state) {
+        // Actualizar ubicación del conductor asignado
+        if (state.driverLocation != null) {
+          _addMarker(
+            'user',
+            state.driverLocation!,
+            'Usuario',
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+          );
+        }
+      },
+      builder: (context, tripState) {
+        return Stack(
+          children: [
+            GoogleMap(
+              onMapCreated: _onMapCreated,
+              initialCameraPosition: CameraPosition(
+                target: _center,
+                zoom: 11.0,
+              ),
+              myLocationEnabled: true,
+              myLocationButtonEnabled: true,
+              markers: _markers,
+              polylines: _polylines,
+            ),
+
+            // Botón flotante para conectar/desconectar como conductor
+            Positioned(
+              top: 10,
+              right: 10,
+              child: FloatingActionButton(
+                onPressed: _toggleDriverActive,
+                backgroundColor: _isDriverActive ? Colors.green : Colors.grey,
+                child: Icon(
+                  _isDriverActive
+                      ? Icons.check_circle
+                      : Icons.power_settings_new,
+                ),
+              ),
+            ),
+
+            // Sheet para viajes disponibles o viaje actual
+            if (tripState.currentTrip != null) _buildDriverTripSheet(tripState),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDriverTripSheet(TripState tripState) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.3,
+      minChildSize: 0.3,
+      maxChildSize: 0.6,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(16.0),
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
+              ),
+              const SizedBox(height: 16),
 
-              // Sheet de solicitud de viaje
-              if (_destination != null) _buildTripSheet(tripState),
+              // Contenido según estado
+              if (tripState.status == TripStateStatus.waitingDriver)
+                _buildNewTripRequest(tripState),
+
+              if (tripState.status == TripStateStatus.driverAccepted)
+                _buildAcceptedTrip(tripState),
+
+              if (tripState.status == TripStateStatus.inProgress)
+                _buildInProgressTripDriver(tripState),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildNewTripRequest(TripState state) {
+    final trip = state.currentTrip;
+    if (trip == null) return const SizedBox();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Nueva solicitud de viaje',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Origen: ${trip.originAddress}',
+          style: const TextStyle(fontSize: 16, color: Colors.black87),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Destino: ${trip.destinationAddress}',
+          style: const TextStyle(fontSize: 16, color: Colors.black87),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Categoría: ${trip.vehicleCategory.name}',
+          style: const TextStyle(fontSize: 16, color: Colors.black87),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Precio base: \$${trip.basePrice.toStringAsFixed(0)}',
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.green,
+          ),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            Expanded(
+              child: HuxButton(
+                onPressed: () {
+                  if (trip.id.isNotEmpty) {
+                    context.read<TripBloc>().add(DriverAcceptTrip(trip.id));
+                  }
+                },
+                child: const Text('Aceptar'),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: HuxButton(
+                onPressed: () {
+                  context.read<TripBloc>().add(
+                    const TripCancelled(reason: 'Rechazado por conductor'),
+                  );
+                },
+                variant: HuxButtonVariant.secondary,
+                child: const Text('Rechazar'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAcceptedTrip(TripState state) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Viaje aceptado',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Dirígete al punto de recogida',
+          style: TextStyle(fontSize: 16, color: Colors.black87),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: HuxButton(
+            onPressed: () {
+              if (state.currentTrip != null) {
+                context.read<TripBloc>().add(
+                  DriverStartTrip(state.currentTrip!.id),
+                );
+              }
+            },
+            child: const Text('Iniciar viaje'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: HuxButton(
+            onPressed: () {
+              context.read<TripBloc>().add(
+                const TripCancelled(reason: 'Cancelado por conductor'),
+              );
+            },
+            variant: HuxButtonVariant.secondary,
+            child: const Text('Cancelar viaje'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInProgressTripDriver(TripState state) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Viaje en curso',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Llevando al pasajero a su destino',
+          style: TextStyle(fontSize: 16, color: Colors.black87),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: HuxButton(
+            onPressed: () {
+              if (state.currentTrip != null) {
+                context.read<TripBloc>().add(
+                  DriverCompleteTrip(state.currentTrip!.id),
+                );
+              }
+            },
+            child: const Text('Completar viaje'),
+          ),
+        ),
+      ],
     );
   }
 

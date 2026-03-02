@@ -1,28 +1,51 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:async';
-import 'dart:js' as js;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'package:dio/dio.dart';
+
+// Solo importar dart:js en web
+import 'dart:js' as js show context;
 
 class GoogleMapsApiService {
-  GoogleMapsApiService(dynamic _dio) {
-    print('GoogleMapsApiService: Usando JavaScript API de Google Maps');
-    _ensureGoogleMapsLoaded();
+  final Dio _dio;
+  static const String _apiKey = 'AIzaSyBfBB8OlJW5MSRBD--ukYSNBPR7wwbie8s';
+
+  GoogleMapsApiService(this._dio) {
+    if (kIsWeb) {
+      print('GoogleMapsApiService: Usando JavaScript API de Google Maps (Web)');
+      _ensureGoogleMapsLoaded();
+    } else {
+      print('GoogleMapsApiService: Usando HTTP API de Google Maps (Mobile)');
+    }
   }
 
   void _ensureGoogleMapsLoaded() {
-    if (js.context['google'] == null || js.context['google']['maps'] == null) {
-      print('⚠️ Google Maps JavaScript API no está cargada');
-      throw Exception('Google Maps API not loaded');
+    if (kIsWeb) {
+      if (js.context['google'] == null ||
+          js.context['google']['maps'] == null) {
+        print('⚠️ Google Maps JavaScript API no está cargada');
+        throw Exception('Google Maps API not loaded');
+      }
+      print('✅ Google Maps JavaScript API cargada correctamente');
     }
-    print('✅ Google Maps JavaScript API cargada correctamente');
   }
 
-  /// Busca lugares usando Google Places Autocomplete API (nueva versión)
+  /// Busca lugares usando Google Places Autocomplete API
   Future<List<dynamic>> searchPlaces(String query) async {
     if (query.isEmpty) {
       return [];
     }
 
+    if (kIsWeb) {
+      return _searchPlacesWeb(query);
+    } else {
+      return _searchPlacesMobile(query);
+    }
+  }
+
+  /// Versión web usando JavaScript API
+  Future<List<dynamic>> _searchPlacesWeb(String query) async {
     try {
       final completer = Completer<List<dynamic>>();
       final callbackName =
@@ -68,10 +91,8 @@ class GoogleMapsApiService {
         }
       };
 
-      // Escapar query para evitar inyección
       final escapedQuery = query.replaceAll('"', '\\"').replaceAll("'", "\\'");
 
-      // Usar la nueva API de Places
       js.context.callMethod('eval', [
         '''
         (async function() {
@@ -106,8 +127,45 @@ class GoogleMapsApiService {
     }
   }
 
-  /// Obtiene los detalles de un lugar específico usando su place_id (nueva API)
+  /// Versión mobile usando HTTP API
+  Future<List<dynamic>> _searchPlacesMobile(String query) async {
+    try {
+      final response = await _dio.get(
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json',
+        queryParameters: {
+          'input': query,
+          'key': _apiKey,
+          'components': 'country:ec',
+          'language': 'es',
+        },
+      );
+
+      if (response.statusCode == 200 && response.data['predictions'] != null) {
+        return (response.data['predictions'] as List).map((prediction) {
+          return {
+            'description': prediction['description'],
+            'place_id': prediction['place_id'],
+          };
+        }).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error searching places (mobile): $e');
+      return [];
+    }
+  }
+
+  /// Obtiene los detalles de un lugar específico
   Future<Map<String, dynamic>?> getPlaceDetails(String placeId) async {
+    if (kIsWeb) {
+      return _getPlaceDetailsWeb(placeId);
+    } else {
+      return _getPlaceDetailsMobile(placeId);
+    }
+  }
+
+  /// Versión web
+  Future<Map<String, dynamic>?> _getPlaceDetailsWeb(String placeId) async {
     try {
       final completer = Completer<Map<String, dynamic>?>();
       final callbackName =
@@ -136,11 +194,9 @@ class GoogleMapsApiService {
                 'formatted_address': formattedAddress ?? 'Sin dirección',
               });
             } else {
-              print('GoogleMapsAPI Error: No se encontró ubicación');
               completer.complete(null);
             }
           } else {
-            print('GoogleMapsAPI Error: No se encontró el lugar');
             completer.complete(null);
           }
         } catch (e) {
@@ -158,12 +214,8 @@ class GoogleMapsApiService {
         (async function() {
           try {
             const { Place } = await google.maps.importLibrary("places");
-            const place = new Place({
-              id: "$escapedPlaceId"
-            });
-            await place.fetchFields({
-              fields: ["location", "formattedAddress"]
-            });
+            const place = new Place({ id: "$escapedPlaceId" });
+            await place.fetchFields({ fields: ["location", "formattedAddress"] });
             window.$callbackName({
               location: { lat: place.location.lat(), lng: place.location.lng() },
               formattedAddress: place.formattedAddress
@@ -180,7 +232,6 @@ class GoogleMapsApiService {
         const Duration(seconds: 10),
         onTimeout: () {
           js.context.deleteProperty(callbackName);
-          print('Timeout obteniendo detalles del lugar');
           return null;
         },
       );
@@ -190,8 +241,43 @@ class GoogleMapsApiService {
     }
   }
 
-  /// Obtiene las direcciones (ruta) entre dos puntos usando Google Routes API v2 (REST)
+  /// Versión mobile
+  Future<Map<String, dynamic>?> _getPlaceDetailsMobile(String placeId) async {
+    try {
+      final response = await _dio.get(
+        'https://maps.googleapis.com/maps/api/place/details/json',
+        queryParameters: {
+          'place_id': placeId,
+          'key': _apiKey,
+          'fields': 'geometry,formatted_address',
+          'language': 'es',
+        },
+      );
+
+      if (response.statusCode == 200 && response.data['result'] != null) {
+        return response.data['result'];
+      }
+      return null;
+    } catch (e) {
+      print('Error getting place details (mobile): $e');
+      return null;
+    }
+  }
+
+  /// Obtiene las direcciones entre dos puntos
   Future<List<LatLng>> getDirections(LatLng origin, LatLng destination) async {
+    if (kIsWeb) {
+      return _getDirectionsWeb(origin, destination);
+    } else {
+      return _getDirectionsMobile(origin, destination);
+    }
+  }
+
+  /// Versión web
+  Future<List<LatLng>> _getDirectionsWeb(
+    LatLng origin,
+    LatLng destination,
+  ) async {
     try {
       final completer = Completer<List<LatLng>>();
       final callbackName =
@@ -202,70 +288,33 @@ class GoogleMapsApiService {
           js.context.deleteProperty(callbackName);
 
           if (response != null && response['ok']) {
-            // Success response from fetch
             final data = response['data'];
 
             if (data != null &&
                 data['routes'] != null &&
                 data['routes'].length > 0) {
               final route = data['routes'][0];
-              final legs = route['legs'];
+              final polyline = route['polyline'];
 
-              if (legs != null && legs.length > 0) {
-                final leg = legs[0];
-                final distanceMeters = leg['distanceMeters'];
-                final duration = leg['duration'];
-
-                final durationText = _formatDuration(
-                  duration != null ? duration.replaceAll('s', '') : '0',
+              if (polyline != null && polyline['encodedPolyline'] != null) {
+                final encodedPolyline = polyline['encodedPolyline'];
+                PolylinePoints polylinePoints = PolylinePoints();
+                List<PointLatLng> result = polylinePoints.decodePolyline(
+                  encodedPolyline.toString(),
                 );
-                final distanceText = _formatDistance(distanceMeters ?? 0);
+                List<LatLng> decodedPath = result
+                    .map((point) => LatLng(point.latitude, point.longitude))
+                    .toList();
 
-                print(
-                  'GoogleMapsAPI: Ruta encontrada - Distancia: $distanceText, Duración: $durationText',
-                );
-
-                final polyline = route['polyline'];
-                if (polyline != null && polyline['encodedPolyline'] != null) {
-                  final encodedPolyline = polyline['encodedPolyline'];
-                  print('🔍 Tipo de polyline: ${encodedPolyline.runtimeType}');
-                  print(
-                    '🔍 Polyline codificada (primeros 50 chars): ${encodedPolyline.toString().substring(0, encodedPolyline.toString().length > 50 ? 50 : encodedPolyline.toString().length)}',
-                  );
-
-                  // Usar el paquete flutter_polyline_points para decodificar
-                  PolylinePoints polylinePoints = PolylinePoints();
-                  List<PointLatLng> result = polylinePoints.decodePolyline(
-                    encodedPolyline.toString(),
-                  );
-
-                  // Convertir a LatLng de google_maps_flutter
-                  List<LatLng> decodedPath = result
-                      .map((point) => LatLng(point.latitude, point.longitude))
-                      .toList();
-
-                  print('GoogleMapsAPI: Ruta con ${decodedPath.length} puntos');
-                  print(
-                    '🔍 Primeros 3 puntos decodificados: ${decodedPath.take(3).toList()}',
-                  );
-                  completer.complete(decodedPath);
-                } else {
-                  print('GoogleMapsAPI: No se encontró polyline en la ruta');
-                  completer.complete([]);
-                }
+                print('GoogleMapsAPI: Ruta con ${decodedPath.length} puntos');
+                completer.complete(decodedPath);
               } else {
-                print('GoogleMapsAPI: No se encontraron legs en la ruta');
                 completer.complete([]);
               }
             } else {
-              print('GoogleMapsAPI: No se encontraron rutas en la respuesta');
               completer.complete([]);
             }
-          } else if (response != null && !response['ok']) {
-            print('GoogleMapsAPI Error en Routes API: ${response['error']}');
-            completer.complete([]);
           } else {
-            print('GoogleMapsAPI: Respuesta vacía de Routes API');
             completer.complete([]);
           }
         } catch (e) {
@@ -282,26 +331,12 @@ class GoogleMapsApiService {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'X-Goog-Api-Key': 'AIzaSyBfBB8OlJW5MSRBD--ukYSNBPR7wwbie8s',
+                'X-Goog-Api-Key': '$_apiKey',
                 'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs'
               },
               body: JSON.stringify({
-                origin: {
-                  location: {
-                    latLng: {
-                      latitude: ${origin.latitude},
-                      longitude: ${origin.longitude}
-                    }
-                  }
-                },
-                destination: {
-                  location: {
-                    latLng: {
-                      latitude: ${destination.latitude},
-                      longitude: ${destination.longitude}
-                    }
-                  }
-                },
+                origin: { location: { latLng: { latitude: ${origin.latitude}, longitude: ${origin.longitude} } } },
+                destination: { location: { latLng: { latitude: ${destination.latitude}, longitude: ${destination.longitude} } } },
                 travelMode: 'DRIVE',
                 routingPreference: 'TRAFFIC_AWARE',
                 computeAlternativeRoutes: false
@@ -312,13 +347,11 @@ class GoogleMapsApiService {
               const data = await response.json();
               window.$callbackName({ ok: true, data: data });
             } else {
-              const error = await response.text();
-              console.error('Routes API Error:', error);
-              window.$callbackName({ ok: false, error: error });
+              window.$callbackName({ ok: false });
             }
           } catch (error) {
             console.error('Error en computeRoutes:', error);
-            window.$callbackName({ ok: false, error: error.message });
+            window.$callbackName({ ok: false });
           }
         })();
       ''',
@@ -328,7 +361,6 @@ class GoogleMapsApiService {
         const Duration(seconds: 10),
         onTimeout: () {
           js.context.deleteProperty(callbackName);
-          print('Timeout obteniendo direcciones');
           return [];
         },
       );
@@ -338,30 +370,39 @@ class GoogleMapsApiService {
     }
   }
 
-  /// Formatea la duración en segundos a formato legible
-  String _formatDuration(String seconds) {
+  /// Versión mobile
+  Future<List<LatLng>> _getDirectionsMobile(
+    LatLng origin,
+    LatLng destination,
+  ) async {
     try {
-      final totalSeconds = int.parse(seconds);
-      final hours = totalSeconds ~/ 3600;
-      final minutes = (totalSeconds % 3600) ~/ 60;
+      final response = await _dio.get(
+        'https://maps.googleapis.com/maps/api/directions/json',
+        queryParameters: {
+          'origin': '${origin.latitude},${origin.longitude}',
+          'destination': '${destination.latitude},${destination.longitude}',
+          'key': _apiKey,
+          'mode': 'driving',
+          'language': 'es',
+        },
+      );
 
-      if (hours > 0) {
-        return '$hours h $minutes min';
-      } else {
-        return '$minutes min';
+      if (response.statusCode == 200 &&
+          response.data['routes'] != null &&
+          (response.data['routes'] as List).isNotEmpty) {
+        final route = response.data['routes'][0];
+        final polyline = route['overview_polyline']['points'];
+
+        PolylinePoints polylinePoints = PolylinePoints();
+        List<PointLatLng> result = polylinePoints.decodePolyline(polyline);
+        return result
+            .map((point) => LatLng(point.latitude, point.longitude))
+            .toList();
       }
+      return [];
     } catch (e) {
-      return 'N/A';
-    }
-  }
-
-  /// Formatea la distancia en metros a formato legible
-  String _formatDistance(int meters) {
-    if (meters >= 1000) {
-      final km = (meters / 1000).toStringAsFixed(1);
-      return '$km km';
-    } else {
-      return '$meters m';
+      print('Error getting directions (mobile): $e');
+      return [];
     }
   }
 }

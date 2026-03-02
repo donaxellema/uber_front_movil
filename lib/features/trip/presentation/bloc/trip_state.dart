@@ -19,6 +19,7 @@ class TripState extends Equatable {
   final String? errorMessage;
   final List<LatLng> nearbyDrivers;
   final LatLng? driverLocation;
+  final bool isDriverAvailable;
 
   const TripState({
     this.status = TripStateStatus.initial,
@@ -26,6 +27,7 @@ class TripState extends Equatable {
     this.errorMessage,
     this.nearbyDrivers = const [],
     this.driverLocation,
+    this.isDriverAvailable = false,
   });
 
   TripState copyWith({
@@ -34,6 +36,7 @@ class TripState extends Equatable {
     String? errorMessage,
     List<LatLng>? nearbyDrivers,
     LatLng? driverLocation,
+    bool? isDriverAvailable,
   }) {
     return TripState(
       status: status ?? this.status,
@@ -41,6 +44,7 @@ class TripState extends Equatable {
       errorMessage: errorMessage,
       nearbyDrivers: nearbyDrivers ?? this.nearbyDrivers,
       driverLocation: driverLocation ?? this.driverLocation,
+      isDriverAvailable: isDriverAvailable ?? this.isDriverAvailable,
     );
   }
 
@@ -51,5 +55,6 @@ class TripState extends Equatable {
     errorMessage,
     nearbyDrivers,
     driverLocation,
+    isDriverAvailable,
   ];
 }
