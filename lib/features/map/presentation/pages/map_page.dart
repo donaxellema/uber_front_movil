@@ -352,6 +352,20 @@ class _MapPageContentState extends State<_MapPageContent> {
         actions: [
           BlocBuilder<AppModeCubit, AppMode>(
             builder: (context, appMode) {
+              if (appMode == AppMode.driver) {
+                return IconButton(
+                  icon: const Icon(Icons.directions_car),
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/vehicles');
+                  },
+                  tooltip: 'Mis Vehículos',
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+          BlocBuilder<AppModeCubit, AppMode>(
+            builder: (context, appMode) {
               return IconButton(
                 icon: Icon(
                   appMode == AppMode.passenger

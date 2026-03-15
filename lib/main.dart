@@ -9,6 +9,7 @@ import 'features/auth/presentation/pages/login_page.dart';
 import 'features/auth/presentation/pages/register_page.dart';
 import 'features/auth/presentation/pages/forgot_password_page.dart';
 import 'features/map/presentation/pages/map_page.dart';
+import 'features/vehicle/presentation/pages/vehicle_management_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +39,7 @@ class MyApp extends StatelessWidget {
           '/register': (context) => const RegisterPage(),
           '/forgot-password': (context) => const ForgotPasswordPage(),
           '/home': (context) => const MapPage(),
+          '/vehicles': (context) => const VehicleManagementPage(),
         },
       ),
     );

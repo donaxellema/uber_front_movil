@@ -12,6 +12,9 @@ import '../../features/auth/domain/repositories/auth_repository.dart';
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/trip/presentation/bloc/trip_bloc.dart';
 import '../../features/app_mode/app_mode_cubit.dart';
+import '../../features/vehicle/data/repositories/vehicle_repository_impl.dart';
+import '../../features/vehicle/domain/repositories/vehicle_repository.dart';
+import '../../features/vehicle/presentation/bloc/vehicle_bloc.dart';
 
 final getIt = GetIt.instance;
 
@@ -48,9 +51,15 @@ Future<void> setupDependencyInjection() async {
   getIt.registerLazySingleton<AuthRepository>(
     () => AuthRepositoryImpl(remoteDataSource: getIt(), storage: getIt()),
   );
+  getIt.registerLazySingleton<VehicleRepository>(
+    () => VehicleRepositoryImpl(getIt()),
+  );
 
   // BLoC
   getIt.registerFactory<AuthBloc>(() => AuthBloc(authRepository: getIt()));
   getIt.registerFactory<TripBloc>(() => TripBloc(socketService: getIt()));
   getIt.registerLazySingleton<AppModeCubit>(() => AppModeCubit());
+  getIt.registerFactory<VehicleBloc>(
+    () => VehicleBloc(vehicleRepository: getIt()),
+  );
 }
